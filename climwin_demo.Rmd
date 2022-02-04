@@ -1,0 +1,164 @@
+---
+title: "climwin_demo"
+author: "LRA"
+date: "2/4/2022"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning = FALSE)
+library(tidyverse)
+library(lme4)
+library(climwin)
+library(lubridate)
+library(sjPlot)
+library(performance)
+```
+
+## Demo for Coffee & Code
+
+Use the climwin pacakage to identify climate windows of interest for further modeling
+Requires 2 data sets - response variable and climate data
+package is structured to use daily climate data
+Response variable here is seagrass shoot density
+
+# Prep biological data 
+```{r biodata}
+# read in environmental data at transect level
+env19 <- read_csv("data/all_survey_metrics_transect_2019.csv")
+env20 <- read_csv("data/all_survey_metrics_transect_2020.csv")
+env21 <- read_csv("data/all_survey_metrics_transect_2021.csv")
+
+env19 <- select(env19,-c("PrevalenceMean","SeverityMean","LesionAreaMean"))
+env20 <- select(env20,-c("PrevalenceMean","SeverityMean","LesionAreaMean", "EpiphytePerAreaSe"))
+env21 <- select(env21,-c("PrevalenceMean","SeverityMean","LesionAreaMean", "EpiphytePerAreaSe"))
+env_c <- rbind(env19,env20, env21)
+
+# read in disease data at blade level
+disease19 <- read_csv("data/disease_2019.csv")
+disease20 <- read_csv("data/disease_metrics_2020.csv")
+disease21 <- read_csv("data/disease_metrics_2021.csv")
+
+disease19 <- select(disease19, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+disease20 <- select(disease20, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+disease21 <- select(disease21, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+
+dis_c <- rbind(disease19,disease20, disease21)
+
+dis_summ <- dis_c %>%
+  group_by(Year,Region, SiteCode,Transect, SampleDate) %>%
+  summarise(TransectPrevalence=mean(Prevalence), TransectLesionArea=mean(LesionArea), TransectSeverity=mean(Severity),
+            TransectBladeArea=mean(BladeArea))
+
+dis_env <- full_join(dis_summ, env_c, by=c("Year","Region","SiteCode","Transect"))
+# limit to observations with no missing data
+dis_env <- select(dis_env, c("SampleDate","Region","SiteCode","TidalHeight","Transect","TransectPrevalence",
+                              "TransectLesionArea","TransectBladeArea","TransectSeverity","Year",
+                             "DensityShootsMean", "CountBlades"))
+dis_env <- na.omit(dis_env)
+# add IDs
+dis_env$Meadow <- paste(dis_env$Region, dis_env$SiteCode, sep = "_")
+head(dis_env)
+```
+
+## Prep climate data
+
+```{r clim data, echo=FALSE}
+# use daily data?
+mur <- read_csv("data/MUR_daily.csv")
+meadows <- tibble(Meadow=unique(mur$Meadow))
+# convert dates for climwin
+mur$Day <- factor(format(mur$Date, "%d/%m/%Y"))
+head(mur)
+```
+
+## Fit baseline model
+
+```{r baseline}
+# limit disease data to MUR sites
+dis_env <- left_join(meadows,dis_env, by="Meadow")
+# scale continuous variables based on restricted data set
+dis_env$sBladeArea <- scale(dis_env$TransectBladeArea, center=TRUE,scale=TRUE)
+dis_env$sDensityShootsMean <- scale(dis_env$DensityShootsMean, center=TRUE, scale=TRUE)
+# convert dates for climwin
+dis_env$SampleDay <- factor(format(dis_env$SampleDate, "%d/%m/%Y"))
+# convert year to factor
+dis_env$fYear <- as.factor(dis_env$Year)
+
+fit_den <- lmer(DensityShootsMean ~ sBladeArea + TidalHeight + fYear + 
+                  (1|Region) + (1|Meadow),
+                data = dis_env)
+summary(fit_den)
+```
+
+## Look for climate windows
+
+```{r climwin}
+
+clim_mur_den_tr <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean, 
+                                           TempAnomalyHeat = mur$DiffMeanHeat, 
+                                           Temp = mur$analysed_sst),
+                               cdate = mur$Day,
+                               bdate = dis_env$SampleDay,
+                               baseline = fit_den,
+                               cohort = as.factor(dis_env$Year),
+                               cinterval = "month",
+                               range = c(6, 0),
+                               type = c("absolute","relative"),
+                               refday = c(20, 7),
+                               cmissing = "method1",
+                               stat = c("mean"),
+                               func = "lin",
+                               spatial = list(dis_env$Meadow, mur$Meadow))
+clim_mur_den_tr$combos
+# best models include terms for TempAnomalyHeat for month opening 4 months before July 20 and closing 3 months before and 
+# Temp Anomaly Heat for 1 month window opening 5 months prior and closing 4 months prior to sampling
+# summary(clim_mur_den_tr[[5]]$BestModel)
+plotdelta(dataset = clim_mur_den_tr[[5]]$Dataset)
+plot_model(clim_mur_den_tr[[5]]$BestModel, show.values = TRUE, show.p = TRUE)
+```
+
+## Check for overfitting with randomization
+
+```{r random}
+# check with randomization
+# clim_mur_den_tr_randomized <- randwin(repeats=100,
+#                                       xvar = list(TempAnomaly = mur$DiffMean, 
+#                                                   TempAnomalyHeat = mur$DiffMeanHeat, 
+#                                                   Temp = mur$analysed_sst),
+#                                       cdate = mur$Day,
+#                                       bdate = dis_env$SampleDay,
+#                                       baseline = fit_den,
+#                                       cohort = as.factor(dis_env$Year),
+#                                       cinterval = "month",
+#                                       range = c(6, 0),
+#                                       type = c("absolute","relative"),
+#                                       refday = c(20, 7),
+#                                       cmissing = "method1",
+#                                       stat = c("mean"),
+#                                       func = "lin",
+#                                       spatial = list(dis_env$Meadow, mur$Meadow))
+clim_mur_den_tr_randomized <- readRDS("output/climwin_density_daily_MUR_transect.rds")
+clim_mur_den_tr_randomized[[5]]
+plothist(dataset=clim_mur_den_tr[[5]]$Dataset, datasetrand = clim_mur_den_tr_randomized[[5]])
+pvalue(dataset=clim_mur_den_tr[[5]]$Dataset, datasetrand = clim_mur_den_tr_randomized[[5]], metric="AIC")
+```
+
+## Update baseline model to include climate
+
+```{r new_mod}
+head(clim_mur_den_tr[[5]]$BestModelData)
+# climate predictor is for best model is Temp Anomaly Heat for 1 month window opening 5 months prior and closing 4 months prior to sampling
+# rather than recalculate, use this dataset but rename yvar and climate
+new_data <- clim_mur_den_tr[[5]]$BestModelData
+new_data <- rename(new_data, DensityShootsMean=yvar, TempAnomalyHeat=climate)
+fit_den_update <- lmer(DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TempAnomalyHeat +
+                  (1|Region) + (1|Meadow),
+                data = new_data)
+summary(fit_den_update)
+AIC(fit_den, fit_den_update)
+```
+
