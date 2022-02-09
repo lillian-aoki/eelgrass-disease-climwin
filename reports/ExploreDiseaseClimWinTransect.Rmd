@@ -1,0 +1,346 @@
+---
+title: "Climwin with MUR"
+author: "LRA"
+date: "1/27/2022"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(lme4)
+library(climwin)
+library(lubridate)
+library(glmmTMB)
+library(ggeffects)
+library(sjPlot)
+```
+
+## Climate window analysis
+
+Here I am running a climate window analysis using the `climwin` package and following Maya's protocol for the SJI disease data. The idea is to test for sensitivity of wasting disease metrics to continuous climate variables (e.g. mean temp, etc) over a moving window. This can better identify the climate sensitivity. 
+
+### Disease and temperature data
+
+I am using three years of disease data from the NSF wasting disease surveys - 2019-2021. I am combining these with SST data from the MUR product (1-km resolution). The MUR dataset has a long-term record, allowing for the calculation of a long-term mean temperature and anomalies from the long-term mean. The analysis of 2019 data showed that disease was related to temperature anomalies but not to absolute temperatures.  
+
+The drawback of using the MUR data is that there are not MUR data for the Bodega region sites. In 2019, we could supplement with a different SST data product (G1SST) but this product stopped being made as of Jan 1, 2020. I'm not really happy yet with other workarounds for Bodega temperatures. 
+
+Note that the unit of replication here is transect, which is the level at which we have shoot density data.  
+
+```{r data}
+# read in environmental data at transect level
+env19 <- read_csv("data/all_survey_metrics_transect_2019.csv")
+env20 <- read_csv("data/all_survey_metrics_transect_2020.csv")
+env21 <- read_csv("data/all_survey_metrics_transect_2021.csv")
+
+env19 <- select(env19,-c("PrevalenceMean","SeverityMean","LesionAreaMean"))
+env20 <- select(env20,-c("PrevalenceMean","SeverityMean","LesionAreaMean", "EpiphytePerAreaSe"))
+env21 <- select(env21,-c("PrevalenceMean","SeverityMean","LesionAreaMean", "EpiphytePerAreaSe"))
+env_c <- rbind(env19,env20, env21)
+
+# read in disease data at blade level
+disease19 <- read_csv("data/disease_2019.csv")
+disease20 <- read_csv("data/disease_metrics_2020.csv")
+disease21 <- read_csv("data/disease_metrics_2021.csv")
+
+disease19 <- select(disease19, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+disease20 <- select(disease20, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+disease21 <- select(disease21, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+
+dis_c <- rbind(disease19,disease20, disease21)
+
+dis_summ <- dis_c %>%
+  group_by(Year,Region, SiteCode,Transect, SampleDate) %>%
+  summarise(TransectPrevalence=mean(Prevalence), TransectLesionArea=mean(LesionArea), TransectSeverity=mean(Severity),
+            TransectBladeArea=mean(BladeArea))
+
+dis_env <- full_join(dis_summ, env_c, by=c("Year","Region","SiteCode","Transect"))
+# limit to observations with no missing data
+dis_env <- select(dis_env, c("SampleDate","Region","SiteCode","TidalHeight","Transect","TransectPrevalence",
+                              "TransectLesionArea","TransectBladeArea","TransectSeverity","Year",
+                             "DensityShootsMean", "CountBlades"))
+dis_env <- na.omit(dis_env)
+# add IDs
+dis_env$Meadow <- paste(dis_env$Region, dis_env$SiteCode, sep = "_")
+
+# read in MUR data 
+# use daily data?
+mur <- read_csv("data/MUR_daily.csv")
+meadows <- tibble(Meadow=unique(mur$Meadow))
+# convert dates for climwin
+mur$Day <- factor(format(mur$Date, "%d/%m/%Y"))
+
+# limit disease data to MUR sites
+dis_env <- left_join(meadows,dis_env, by="Meadow")
+# scale continuous variables based on restricted data set
+dis_env$sBladeArea <- scale(dis_env$TransectBladeArea, center=TRUE,scale=TRUE)
+dis_env$sDensityShootsMean <- scale(dis_env$DensityShootsMean, center=TRUE, scale=TRUE)
+# convert dates for climwin
+dis_env$SampleDay <- factor(format(dis_env$SampleDate, "%d/%m/%Y"))
+# convert year to factor
+dis_env$fYear <- as.factor(dis_env$Year)
+
+```
+### Response and predictor variables
+
+The response variables I am investigating are disease prevalence, disease severity, and lesion area. For each response variable, I conducted a sepearte climwin analysis using three different possible climate predictors: 1) the absolute temperature (raw temperatures from the MUR SST data), 2) the temperature anomaly (difference from the long-term mean temperature), and 3) the warm temperature anomaly (positive differences from the long-term mean temperature).  
+
+For each of the three climate predictors, I looked at relative climate windows, measured prior to the day of sampling, and absolute climate windows, prior to July 20, which is approximately the median sampling date (July 18 in 2019, July 22 in 2020 and 2021). I looked at windows starting up to 6 months prior to sampling and lasting from 1-6 months. Over each climate window, I tested the mean temperature, mean temperature anomaly, and mean warm temperature anomaly. I also tested cumulative temperature metrics over the same windows, but note that cumulative and mean metrics have the same effect on AIC. So for simplicity I only did the full analysis with means.
+
+The climate window analysis compares models with the climate predictor to a baseline model without the climate predictor. I used a binomial GLMM to model prevalence and a GLMM with a gamma distribution to model severity and lesion area. The predictors for the baseline models were `Blade Area`, `Shoot Density`, `Tidal Height` (upper or lower), and `Year`. Region and Meadow are included as random effects (with Meadow nested within Region)
+
+### Baseline model for prevalence 
+
+For the prevalence analysis, the baseline model is a binomial GLMM that has `Prevalence` as the response variable (0 or 1 for healthy or diseased) and predictors of `Blade Area`, `Shoot Density`, `Tidal Height` (upper or lower), and `Year`. These predictors were significant in the 2019 data. Region and Meadow are included as random effects (with Meadow nested within Region).  
+
+```{r prev_model}
+# fit prev model before running climwin
+# fit baseline model
+fit_prev1 <- glmer(TransectPrevalence ~ sBladeArea + sDensityShootsMean + TidalHeight + fYear + 
+                     (1|Region) + (1|Meadow),
+                    data = dis_env,
+                    family = "binomial",
+                   weights=CountBlades)
+summary(fit_prev1)
+drop1(fit_prev1)
+# no improvement to the model by dropping terms, therefore keep as baseline
+```
+
+In the baseline model, blade area, shoot density, and year are significant predictors of prevalence and tidal height is not significant. There's no improvement in AIC by dropping terms from the model, so we can keep this as the baseline model. 
+
+### Compare climate windows for prevalence
+
+For the climate window analysis, I looked at three possible temperature predictors: absolute temperature (raw values from the SST data), the temperature anomaly (mean difference from long-term temperatures), the monthly cumulative positive anomalies (i.e. the sum of positive anomalies for each month) as the temperature predictor. I included temperatures from the months 0-6 months prior to sampling
+```{r prev_climwin, echo=FALSE}
+# median sample date each year is ~July 20 (July 18 in 2019, July 22 in 2020 and 2021)
+# after first run, read in prior model results
+clim_mur_prev_tr <- readRDS("output/climwin_prev_daily_MUR_transect.rds")
+# clim_mur_prev_tr <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                             cdate = mur$Day,
+#                             bdate = dis_env$SampleDay,
+#                             baseline = fit_prev1,
+#                             cohort = as.factor(dis_env$Year),
+#                             cinterval = "month",
+#                             range = c(6, 0),
+#                             type = c("absolute","relative"),
+#                             refday = c(20, 7),
+#                             cmissing = "method1",
+#                             stat = c("mean", "sum"),
+#                             func = "lin",
+#                             spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(clim_mur_prev_tr, file = "output/climwin_prev_daily_MUR_transect.rds")
+clim_mur_prev_tr$combos
+# best model has TempAnomaly in the month immediately prior to sampling
+plotdelta(dataset = clim_mur_prev_tr[[4]]$Dataset)
+summary(clim_mur_prev_tr[[4]]$BestModel)
+plot_model(clim_mur_prev_tr[[4]]$BestModel)
+```
+
+The most improved model has a climate predictor of temperature anomaly for the month immediately before sampling (roughly mid-June to mid-July). Other models do not have deltaAIC of similar magnitude.  
+
+Perhaps surprisingly, the coefficient of climate is negative, i.e. a higher anomaly is related to lower prevalence. This is largely driven by low disease prevalence in 2021, the year of the heat dome in some sites. Prevalence may not be the most useful metric because of the bed regression and loss of shoot densities over time.  
+
+### Assess prevalnce models for overfitting
+
+After identifying the best climate window predictor, need to use randomizations to make sure the relationship is not due to chance.  
+```{r rand_prev}
+# after initial run, read in the saved output
+clim_mur_prev_rand_tr <- readRDS("output/climwin_prev_daily_MUR_transect_random.rds")
+# clim_mur_prev_rand_tr <- randwin(repeats = 100, 
+#                               xvar = list(TempAnomaly = mur$DiffMean, 
+#                                            TempAnomalyHeat = mur$DiffMeanHeat, 
+#                                            Temp = mur$analysed_sst),
+#                             cdate = mur$Day,
+#                             bdate = dis_env$SampleDay,
+#                             baseline = fit_prev1,
+#                             cohort = as.factor(dis_env$Year),
+#                             cinterval = "month",
+#                             range = c(6, 0),
+#                             type = c("absolute","relative"),
+#                             refday = c(20, 7),
+#                             cmissing = "method1",
+#                             stat = c("mean"),
+#                             func = "lin",
+#                             spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(clim_mur_prev_rand_tr, file = "output/climwin_prev_daily_MUR_transect_random.rds")
+plothist(dataset=clim_mur_prev_tr[[4]]$Dataset, datasetrand = clim_mur_prev_rand_tr[[4]])
+```
+
+Radonmizations show the climate predictor's signficance is not due to chance. But the strong correlation between the climate predictor and year might mean it's hard to disentangle year effects and climate effects. 
+
+### Baseline model for severity
+
+The baseline model for severity is a linear model with predictors of `Blade Area`, `Shoot Density`, `Tidal Height`, and `Year`. Note that this is the initial model - for the full severity model, I will use a zero-inflated GLMM with gamma distribution (a hurdle model), but the outputs from the gamma model don't run with the climwin package. However this is exploratory analysis to identify relevant climate predictors, so here I'm using the linear model.  
+
+```{r sev_model}
+# fit sev model before running climwin
+fit_sev1 <- lmer(TransectSeverity ~ sBladeArea + sDensityShootsMean + TidalHeight + fYear + (1|Region) + (1|Meadow),
+                    data = dis_env)
+summary(fit_sev1)
+# fit_sev_c2 <- lmer(Severity ~ sBladeArea + sDensityShootsMean + TidalHeight + fYear + Region + (1|Meadow) + (1|TransectID),
+#                     data = dis_env_c)
+# summary(fit_sev_c2)
+drop1(fit_sev1)
+# no improvement to the model by dropping terms, therefore keep as baseline
+```
+
+No improvement to the model by dropping terms, therefore keep as baseline  
+
+### Compare climate windows for severity
+
+```{r sev_climwin, echo=FALSE}
+# after first run, load the saved model
+clim_mur_sev_tr <- readRDS("output/climwin_sev_daily_MUR_transect.rds")
+# clim_mur_sev_tr <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean, 
+#                                            TempAnomalyHeat = mur$DiffMeanHeat, 
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = fit_sev1,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(20, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(clim_mur_sev_tr, file = "output/climwin_sev_daily_MUR_transect.rds")
+clim_mur_sev_tr$combos
+# similar improvement to model using both absolute and relative windows. 
+# TempAnomaly and TempAnomalyHeat improve more than Temp.
+# 
+# best AIC is for temp anomaly based on 1 month relative window starting 2 month prior to sampling (~May) but equivalent deltaAICc for temp anomaly based on absolute 2 month window opening 3 month prior to July 1 (April-May)
+# since ~May temp is the same for lesion area, use May?
+plotdelta(dataset = clim_mur_sev_tr[[4]]$Dataset)
+summary(clim_mur_sev_tr[[4]]$BestModel)
+plot_model(clim_mur_sev_tr[[4]]$BestModel)
+```
+
+The best delatAIC is for temp anomaly based on 1 month relative window starting 2 month prior to sampling (~May) but equivalent deltaAICc for temp anomaly based on absolute 2 month window opening 3 month prior to July 1 (April-May)
+
+Since lesion area is also related to ~May anomalies (see below), use the May value?
+
+# since ~May temp is the same for lesion area, use May?
+
+### Assess severity models for overfitting
+
+After identifying the best climate window predictor, need to use randomizations to make sure the relationship is not due to chance.  
+```{r rand_sev}
+# after initial run, read in the saved output
+ clim_mur_sev_rand_tr <- readRDS("output/climwin_sev_daily_MUR_transect_random.rds")
+# clim_mur_sev_rand_tr <- randwin(repeats = 100, 
+#                               xvar = list(TempAnomaly = mur$DiffMean, 
+#                                            TempAnomalyHeat = mur$DiffMeanHeat, 
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = fit_sev1,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(20, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(clim_mur_sev_rand_tr, file = "output/climwin_sev_daily_MUR_transect_random.rds")
+
+plothist(dataset=clim_mur_sev_tr[[4]]$Dataset, datasetrand = clim_mur_sev_rand_tr[[4]])
+```
+
+Randomizations show the improved AIC is not due to chance  
+
+### Baseline model for lesion area
+
+As with severity, this is a linear model for exploration. Predictors are the same as for severity and prevalence (`Blade Area`, `Shoot Density`, `Tidal Height`, and `Year`).  
+
+```{r les_model}
+# fit les model before running climwin
+fit_les <- lmer(TransectLesionArea ~ sBladeArea + sDensityShootsMean + TidalHeight + fYear + (1|Region) + (1|Meadow),
+                    data = dis_env)
+summary(fit_les)
+drop1(fit_les)
+# no improvement to the model by dropping terms, therefore keep as baseline
+```
+
+No improvement to the model by dropping terms, therefore keep as baseline
+
+### Compare climate windows for lesion area
+
+```{r les_climwin, echo=FALSE}
+# after first run, load the model output
+# clim_mur_les <- readRDS("output/climwin_les_daily_MUR_transect.rds")
+clim_mur_les <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+                                           TempAnomalyHeat = mur$DiffMeanHeat,
+                                           Temp = mur$analysed_sst),
+                         cdate = mur$Day,
+                         bdate = dis_env$SampleDay,
+                         baseline = fit_les,
+                         cohort = as.factor(dis_env$Year),
+                         cinterval = "month",
+                         range = c(6, 0),
+                         type = c("absolute","relative"),
+                         refday = c(20, 7),
+                         cmissing = "method1",
+                         stat = c("mean"),
+                         func = "lin",
+                         spatial = list(dis_env$Meadow, mur$Meadow))
+saveRDS(clim_mur_les, file = "output/climwin_les_daily_MUR_transect.rds")
+
+clim_mur_les$combos
+# strongly better AIC for temp anomaly from 1 month window opening 2 months prior to sampling date and July 20 (~May temps)
+# same metric as for severity
+plotdelta(dataset = clim_mur_les[[4]]$Dataset)
+summary(clim_mur_les[[4]]$BestModel)
+
+```
+
+Best model has the same predictor as for severity - temp anomaly for 1 month window opening 2 months prior to sampling.
+
+### Assess lesion models for overfitting
+
+After identifying the best climate window predictor, need to use randomizations to make sure the relationship is not due to chance.  
+```{r rand_les}
+# after initial run, read in the saved output
+clim_mur_les_rand_tr <- readRDS("output/climwin_les_daily_MUR_transect_random.rds")
+# clim_mur_les_rand_tr <- randwin(repeats = 100, 
+#                               xvar = list(TempAnomaly = mur$DiffMean, 
+#                                            TempAnomalyHeat = mur$DiffMeanHeat, 
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = fit_sev1,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(20, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(clim_mur_les_rand_tr, file = "output/climwin_les_daily_MUR_transect_random.rds")
+plothist(dataset=clim_mur_les[[4]]$Dataset, datasetrand = clim_mur_les_rand_tr[[4]])
+```
+
+Randomizations also show the best model for lesion area is not due to chance. 
+
+### Conclusions
+
+Climate metrics to use for complete modeling are:  
+- For prevalence, temperature anomaly for the month immediately before sampling (roughly mid-June to mid-July)  
+- For severity, temp anomaly for 1 month window opening 2 months prior to sampling (~May)  
+- For lesion area, temp anomaly for 1 month window opening 2 months prior to sampling (~May) - same as severity  
+
+Will do separate analysis for shoot density (preliminary shows that winter temps in Feb/Mar are significant)  
+
+Major drawback so far is lack of Bodega data. Just not sure how to solve this. Predict in situ from LST and then convert to SST?
