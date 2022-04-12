@@ -1,0 +1,626 @@
+---
+title: "EpifaunaClimateSensitivity"
+author: "LRA"
+date: "4/11/2022"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(lme4)
+library(climwin)
+library(lubridate)
+library(glmmTMB)
+library(ggeffects)
+library(sjPlot)
+library(here)
+```
+
+## Climate window analysis for epifauna
+
+Here I am running a climate window analysis using the `climwin` package for the wasting disease epifauna dataset. The goal is to test for sensitivity of epifauna metrics to continuous climate variables (e.g. mean temp, etc) over a moving window. This can better identify the climate sensitivity, i.e. what climate variable over what time period is the strongest predictor of epifuana community during the surveys.
+
+### Epifauna and temperature data
+
+I am using three years of epifauna data from the NSF wasting disease surveys - 2019-2021. I am combining these with SST data from the MUR product (1-km resolution). The MUR dataset has a long-term record, allowing for the calculation of a long-term mean temperature and anomalies from the long-term mean. The analysis of 2019 data showed that wasting disease was related to temperature anomalies but not to absolute temperatures. Here I am exploring the correlations between the epifauna and temperature, i.e. a direct relationship that might have an indirect effect on disease.  
+
+The drawback of using the MUR data is that there are not MUR data for the Bodega region sites. In 2019, we could supplement with a different SST data product (G1SST) but this product stopped being made as of Jan 1, 2020. There are other SST products available, one of which is VIIRS, which has coverage of a different subset of sites than MUR. The two SST products are not really comparable (VIIRS is warmer), so my plan is to conduct multiple analyses, with VIIRS and with MUR sites separately and compare the overlapping sites. Hopefully we will see the same trends with temperature as we slice the datasets in different ways.  
+
+Note that the unit of replication here is transect. During the surveys, we collected 2 epifauna samples per transect, at six transects per site. This analysis combines those two transect-level replicates.   
+
+#### Missing data 
+
+We have no Alaska epifauna samples from 2020, no lower intertidal epifauna samples from Oregon in 2020, and Bodega samples from 2021 are not yet fully processed. So we have a partially limited dataset. However, we have all the data we need to look at the MUR site sensitivity. 
+
+``` {r data}
+# read in and summarize epifauna data
+epi <- readxl::read_excel("data/EGWD_epifauna_data_v20220309.xlsx", sheet = "data")
+epi_summ <- epi %>%
+  group_by(SampleId=transect_unique_code) %>%
+  summarise(EpiAbun=mean(as.numeric(epifauna_abundance_total, na.rm=TRUE)),
+            MollAbun=mean(as.numeric(mollusca_abundance, na.rm = TRUE)),
+            CrustAbun=mean(as.numeric(crustacea_abundance, na.rm = TRUE)),
+            AmphiAbun=mean(as.numeric(amphipod_abundance, na.rm = TRUE)),
+            GastAbun=mean(as.numeric(gastropod_abundance, na.rm = TRUE)),
+            IsoAbun=mean(as.numeric(isopod_abundance, na.rm = TRUE)),
+            AmpithAbun=mean(as.numeric(ampithoid_abundance, na.rm = TRUE)),
+            IdotAbun=mean(as.numeric(idoteid_abundance, na.rm = TRUE)),
+            LacAbun=mean(as.numeric(Lacuna_abundance, na.rm = TRUE))) %>% 
+  ## add richness? How to calculate transect-level?
+  separate(SampleId, into = c("Region","SiteCode","Transect","Year"), sep = "[.]")
+epi_summ$TidalHeight <- str_extract(epi_summ$Transect, "[U,L]")
+epi_summ$Transect <- as.numeric(str_extract(epi_summ$Transect, "[1-6]"))
+epi_summ$Year <- as.numeric(epi_summ$Year)
+
+# read in environmental data at transect level
+env19 <- read_csv("data/all_survey_metrics_transect_2019.csv")
+env20 <- read_csv("data/all_survey_metrics_transect_2020.csv")
+env21 <- read_csv("data/all_survey_metrics_transect_2021.csv")
+
+env19 <- select(env19,-c("PrevalenceMean","SeverityMean","LesionAreaMean"))
+env20 <- select(env20,-c("PrevalenceMean","SeverityMean","LesionAreaMean", "EpiphytePerAreaSe"))
+env21 <- select(env21,-c("PrevalenceMean","SeverityMean","LesionAreaMean", "EpiphytePerAreaSe"))
+env_c <- rbind(env19,env20, env21)
+
+# read in disease data at blade level
+disease19 <- read_csv("data/disease_2019.csv")
+disease20 <- read_csv("data/disease_metrics_2020.csv")
+disease21 <- read_csv("data/disease_metrics_2021.csv")
+
+disease19 <- select(disease19, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+disease20 <- select(disease20, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+disease21 <- select(disease21, c("SampleDate","SampleId","Region","SiteCode","TidalHeight", "Transect", "Blade",
+                                 "Year", "Prevalence", "LesionArea", "BladeArea", "Severity"))
+
+dis_c <- rbind(disease19,disease20, disease21)
+
+dis_summ <- dis_c %>%
+  group_by(Year,Region, SiteCode,Transect, SampleDate) %>%
+  summarise(TransectPrevalence=mean(Prevalence), TransectLesionArea=mean(LesionArea), TransectSeverity=mean(Severity),
+            TransectBladeArea=mean(BladeArea))
+
+dis_env <- full_join(dis_summ, env_c, by=c("Year","Region","SiteCode","Transect"))
+# add epifauna
+dis_env <- full_join(dis_env, epi_summ, by=c("Year","Region","SiteCode","TidalHeight","Transect"))
+# limit to observations with no missing data
+dis_env <- select(dis_env, c("SampleDate","Region","SiteCode","TidalHeight","Transect","TransectPrevalence",
+                             "TransectLesionArea","TransectBladeArea","TransectSeverity","Year",
+                             "DensityShootsMean", "CountBlades","EpiAbun","MollAbun", "CrustAbun", "AmphiAbun",
+                             "GastAbun", "IsoAbun", "AmpithAbun","IdotAbun","LacAbun"))
+dis_env <- na.omit(dis_env)
+# add IDs
+dis_env$Meadow <- paste(dis_env$Region, dis_env$SiteCode, sep = "_")
+
+# read in MUR data 
+# use daily data?
+mur <- read_csv("data/MUR_daily.csv")
+meadows <- tibble(Meadow=unique(mur$Meadow))
+# convert dates for climwin
+mur$Day <- factor(format(mur$Date, "%d/%m/%Y"))
+
+# limit disease data to MUR sites
+dis_env <- left_join(meadows,dis_env, by="Meadow")
+# scale continuous variables based on restricted data set
+dis_env$sBladeArea <- scale(dis_env$TransectBladeArea, center=TRUE,scale=TRUE)
+dis_env$sDensityShootsMean <- scale(dis_env$DensityShootsMean, center=TRUE, scale=TRUE)
+dis_env$sEpiAbun <- scale(dis_env$EpiAbun, center=TRUE, scale=TRUE)
+# convert dates for climwin
+dis_env$SampleDay <- factor(format(dis_env$SampleDate, "%d/%m/%Y"))
+# convert year to factor
+dis_env$fYear <- as.factor(dis_env$Year)
+
+```
+### Response and predictor variables
+
+Here, we are looking at the relationship between epifauna abundance (response variable) and temperature (predictor). The specific temperature predictors I am testing are:  
+
+- the raw temperature  (Temp)  
+- the temperature anomaly (deviation from the long-term mean, TempAnomaly)  
+- the warm temperature anomaly (positive deviations from the long-term mean, TempAnomalyHeat)  
+
+Note that the cumulative anomaly and mean anomaly over a given period of time give the same relationship, just over a different scale. I used the cumulative anomaly in the past, we can continue to do so or use the mean.  
+
+I used the `climwin` package to systemically compare each of these three metrics over periods of 0-6 months prior to sampling, using both the site specific sampling date and the month of July as the sampling month. The analysis also compares windows of different lengths (e.g. from 1-6 months in length). 
+
+The epifauna response variables I am testing are:  
+
+- total epifauna abundance   
+- gastropod abundance 
+- isopod abundance 
+- lacuna abundance  
+- amphipod abundance  
+- ampithoid abundance  
+
+Units for all are per g wet weight of marcophytes.  
+
+We also have data on the species richness, I just need to check with Emmett/Carmen about the best way to average species richness data. *Note that we have other epifauna taxa, e.g. molluscs that we could also use*  
+
+Other predictors to include in the model are:  
+- seagrass shoot density  
+- seagrass blade area  
+- tidal height (upper/lower)  
+- year (fixed effect)  
+- location (meadow aka site within region, random effect) *consider whether location should be fixed?*  
+
+### Baseline models
+
+The `climwin` analysis takes a baseline model, adds a temperature metric, then assess whether the model with the temperature metric is improved compared to the baseline model. 
+
+For each epifauna response variable, the baseline model is:
+
+```{r eval=FALSE, purl=FALSE}
+epifauna ~ Shoot Density + Blade Area + Tidal Height + Year + (1|Region) + (1|Meadow)
+```
+
+where Region and Meadow are random effects 
+
+The temperature models take the same model and add a temperature metric:  
+
+```{r eval=FALSE, purl=FALSE}
+epifauna ~ Temperature + Shoot Density + Blade Area + Tidal Height + Year + (1|Region) + (1|Meadow)
+```
+
+Note that continuous predictors of shoot density and blade area are centered and standardized so the model will converge.  
+
+## Epifauna Abundance
+
+### Fit baseline model
+Set up baseline model as a glmer with Gamma distribution (because abundance is greater than 0).  
+
+```{r epi_model}
+epi_fit <- glmer(EpiAbun ~ sDensityShootsMean + sBladeArea + TidalHeight + fYear + 
+                   (1|Region) + (1|Meadow),
+                 data= dis_env,
+                 family = Gamma(link = "log")
+                 )
+summary(epi_fit)
+drop1(epi_fit)
+```
+No improvement to the model from dropping terms, so keep as the baseline.  
+
+### Compare climate windows
+```{r epi_climwin, echo=FALSE}
+# after first run, load the saved model
+epi_mur <- readRDS(here("output/epi_mur.rds"))
+# epi_mur <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = epi_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(epi_mur, file = "output/epi_mur.rds")
+
+```
+
+The table below shows the opening and closing of the temperature window for the best model (by AIC) using each temperature metric (Temp, Temp Anomaly, and TempAnomalyHeat) and using the two different start dates (relative to sampling and relative to the first of July). The DeltaAICc column shows the improvement compared to the baseline model with no temperature predictor. 
+
+```{r epi_table}
+epi_mur$combos
+```
+
+Adding any temperature predictor improves the baseline model substantially (AIC decreases by at least 8). Models using TempAnomalyHeat have the best improvement. There's no substantial difference in calculating the anomaly relative to the sampling date or relative to July 1. Therefore use the absolute window since it is simpler to understand. The climate window of the best predictor opens 2 months prior to sampling and closes 2 months prior to sampling. This is May temperatures (2 months prior to July).
+
+```{r epi_plot}
+plotdelta(dataset = epi_mur[[2]]$Dataset)
+summary(epi_mur[[2]]$BestModel)
+plot_model(epi_mur[[2]]$BestModel)
+```
+
+The heat map shows the improvement of the model when including the specific metric of TempAnomalyHeat relative to July 1 and varying the timing of the window (opening and closing from 0 to 6 months before July 1). There are other windows that might have a similar deltaAIC, but overall see support for using the May window.   
+
+Looking at the summary, climate has a significant effect on epifauna abundance, with more epifauna associated with greater warm anomalies in May.  
+
+The climate effect is positive - warmer temperatures/anomalies associated with more epifauna. 
+
+### Assess models for overfitting
+After identifying the best climate window predictor, need to use randomizations to make sure the relationship is not due to chance.  
+
+```{r epi_rd}
+# after initial run, read in the saved output
+epi_mur_rd <- readRDS("output/epi_mur_rd.rds")
+# epi_mur_rd <- randwin(repeats = 100,
+#                               xvar = list(TempAnomalyHeat = mur$DiffMeanHeat),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = epi_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+ # saveRDS(epi_mur_rd, file = "output/epi_mur_rd.rds")
+plothist(dataset=epi_mur[[2]]$Dataset, datasetrand = epi_mur_rd[[1]])
+```
+## Gastropod abundance 
+
+### Fit baseline model
+Use LME because GastAbun starts at zero
+
+```{r gast_model}
+gast_fit <- lmer(GastAbun ~ sDensityShootsMean + sBladeArea + TidalHeight + fYear + 
+                   (1|Region) + (1|Meadow),
+                 data= dis_env)
+                 
+summary(gast_fit)
+drop1(gast_fit)
+```
+No improvement from droping terms so keep the baseline model.
+
+### Compare climate windows
+
+```{r gast_climwin}
+# after first run, load the saved model
+gast_mur <- readRDS("output/gast_mur.rds")
+# gast_mur <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = gast_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(gast_mur, file = "output/gast_mur.rds")
+
+```
+
+Same table of climwin combos as for epifauna model. For gastropods, we see the biggest improvement for TempAnomalyHeat during January-February relative to July 1, and during ~February (5 months prior) using site-specific sampling date. These predictors improve model the same amount so use July 1 reference point for simplicity. 
+
+```{r gast_table}
+gast_mur$combos
+```
+
+```{r gast_plot}
+plotdelta(dataset = gast_mur[[2]]$Dataset)
+summary(gast_mur[[2]]$BestModel)
+plot_model(gast_mur[[2]]$BestModel)
+```
+Generally see a big effect of climate on gastropods and an effect of year. Climate anomaly effect is negative - warmer anomalies associated with fewer gastropods.   
+
+### Assess models for overfitting
+
+```{r gast_rd}
+# after initial run, read in the saved output
+gast_mur_rd <- readRDS("output/gast_mur_rd.rds")
+# gast_mur_rd <- randwin(repeats = 100,
+#                               xvar = list(TempAnomalyHeat = mur$DiffMeanHeat),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = gast_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+ saveRDS(gast_mur_rd, file = "output/gast_mur_rd.rds")
+plothist(dataset=gast_mur[[2]]$Dataset, datasetrand = gast_mur_rd[[1]])
+```
+Not due to random chance  
+
+## Isopod abundance 
+
+### Fit baseline model
+```{r iso_model}
+iso_fit <- lmer(IsoAbun ~ sDensityShootsMean + sBladeArea + TidalHeight + fYear + 
+                   (1|Region) + (1|Meadow),
+                 data= dis_env)
+summary(iso_fit)
+drop1(iso_fit)
+```
+### Compare climate windows
+
+```{r iso_climwin}
+# after first run, load the saved model
+iso_mur <- readRDS("output/iso_mur.rds")
+# iso_mur <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = iso_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(iso_mur, file = "output/iso_mur.rds")
+
+```
+
+```{r iso_table}
+iso_mur$combos
+```
+
+Most improvement via AIC from TempAnomalyHeat starting 6 months prior to sampling and ending the month of sampling. Equivalent to use absolute or relative starting date. 
+
+```{r iso_plot}
+plotdelta(dataset = iso_mur[[2]]$Dataset)
+summary(iso_mur[[2]]$BestModel)
+plot_model(iso_mur[[2]]$BestModel)
+```
+Big effects of climate and year on isopods, as well as seagrass effects. Climate effect is positive - more warm anomalies associated with more isopods.  
+
+### Assess models for overfitting
+```{r iso_rd}
+# after initial run, read in the saved output
+iso_mur_rd <- readRDS("output/iso_mur_rd.rds")
+# iso_mur_rd <- randwin(repeats = 100,
+#                               xvar = list(TempAnomalyHeat = mur$DiffMeanHeat),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = iso_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+ # saveRDS(iso_mur_rd, file = "output/iso_mur_rd.rds")
+plothist(dataset=iso_mur[[2]]$Dataset, datasetrand = iso_mur_rd[[1]])
+```
+Not due to chance. 
+
+## Lacuna abundance  
+
+### Fit baseline model
+
+```{r lac_model}
+lac_fit <- lmer(LacAbun ~ sDensityShootsMean + sBladeArea + TidalHeight + fYear + 
+                   (1|Region) + (1|Meadow),
+                 data= dis_env)
+
+summary(lac_fit)
+drop1(lac_fit)
+```
+### Compare climate windows
+
+```{r lac_climwin}
+# after first run, load the saved model
+lac_mur <- readRDS("output/lac_mur.rds")
+# lac_mur <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = lac_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(lac_mur, file = "output/lac_mur.rds")
+
+```
+
+```{r lac_table}
+lac_mur$combos
+```
+
+Lacuna abundance best model uses climate window for TempAnomaly (not TempAnomalyHeat), from May-June. TempAnomalyHeat also improves model but not by as much.  
+
+```{r lac_plot}
+plotdelta(dataset = lac_mur[[1]]$Dataset)
+summary(lac_mur[[1]]$BestModel)
+plot_model(lac_mur[[1]]$BestModel)
+```
+Climate effect is positive - greater positive anomalies associated with more Lacuna.  
+
+### Assess models for overfitting
+```{r lac_rd}
+# after initial run, read in the saved output
+lac_mur_rd <- readRDS("output/lac_mur_rd.rds")
+# lac_mur_rd <- randwin(repeats = 100,
+#                               xvar = list(TempAnomaly = mur$DiffMean),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = lac_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+ saveRDS(lac_mur_rd, file = "output/lac_mur_rd.rds")
+plothist(dataset=lac_mur[[2]]$Dataset, datasetrand = lac_mur_rd[[1]])
+```
+Not due to chance 
+
+## Amphipod abundance  
+
+### Fit baseline model
+
+```{r amph_model}
+amph_fit <- lmer(AmphiAbun ~ sDensityShootsMean + sBladeArea + TidalHeight + fYear + 
+                   (1|Region) + (1|Meadow),
+                 data= dis_env)
+summary(amph_fit)
+drop1(amph_fit)
+```
+### Compare climate windows
+
+```{r amph_climwin}
+# after first run, load the saved model
+amph_mur <- readRDS("output/amph_mur.rds")
+# amph_mur <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = amph_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(amph_mur, file = "output/amph_mur.rds")
+# 
+```
+
+```{r amph_table}
+amph_mur$combos
+```
+
+Amphipod abundance is most sensitive to temperature from March-June. Similar model improvement with TempAnomalyHeat from Feb-May and for TempAnomalyHeat 3 months prior to sampling date.  
+
+
+```{r amph_plot}
+plotdelta(dataset = amph_mur[[3]]$Dataset)
+summary(amph_mur[[3]]$BestModel)
+plot_model(amph_mur[[3]]$BestModel)
+```
+Climate effect is positive - warmer temps associated with more amphipods.  
+
+### Assess models for overfitting
+
+```{r amph_rd}
+# after initial run, read in the saved output
+ amph_mur_rd <- readRDS("output/amph_mur_rd.rds")
+# amph_mur_rd <- randwin(repeats = 100,
+#                               xvar = list(Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = amph_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+ # saveRDS(amph_mur_rd, file = "output/amph_mur_rd.rds")
+plothist(dataset=amph_mur[[3]]$Dataset, datasetrand = amph_mur_rd[[1]])
+```
+Not due to chance.  
+
+## Ampithoid abundance  
+
+### Fit baseline model
+
+```{r ampi_model}
+ampi_fit <- lmer(AmpithAbun ~ sDensityShootsMean + sBladeArea + TidalHeight + fYear + 
+                   (1|Region) + (1|Meadow),
+                 data= dis_env)
+summary(ampi_fit)
+drop1(ampi_fit)
+```
+
+### Compare climate windows
+
+```{r ampi_climwin}
+# after first run, load the saved model
+ampi_mur <- readRDS("output/ampi_mur.rds")
+# ampi_mur <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = ampi_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(ampi_mur, file = "output/ampi_mur.rds")
+
+```
+
+```{r ampi_table}
+ampi_mur$combos
+```
+
+Best improvement using TempAnomalyHeat from Jan-June  
+
+```{r ampi_plot}
+plotdelta(dataset = ampi_mur[[2]]$Dataset)
+summary(ampi_mur[[2]]$BestModel)
+plot_model(ampi_mur[[2]]$BestModel)
+```
+
+Climate effect is positive - warmer anomalies associated with more ampithoids  
+
+### Assess models for overfitting
+
+```{r ampi_rd}
+# after initial run, read in the saved output
+ampi_mur_rd <- readRDS("output/ampi_mur_rd.rds")
+# ampi_mur_rd <- randwin(repeats = 100,
+#                               xvar = list(TempAnomalyHeat = mur$DiffMeanHeat),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = ampi_fit,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute"),
+#                          refday = c(1, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+ saveRDS(ampi_mur_rd, file = "output/ampi_mur_rd.rds")
+# plothist(dataset=ampi_mur[[2]]$Dataset, datasetrand = ampi_mur_rd[[1]])
+```
+Not due to chance. 
+
+## Conclusions 
+
+Based on this exploration, epifauna abundances are indeed sensitive to temperature anomalies, and the effects are generally larger than seagrass predictors (although that is not fully explored here). The temperature anomalies that improve models the most for each epifauna response variable are as follows:  
+
+1. Epifauna abundance ~ TempAnomalyHeat in May, positive correlation  
+2. Gastropod abundance ~ TempAnomalyHeat in Jan-Feb, negative correlation    
+3. Isopod abundance ~ TempAnomalyHeat in Jan-July, positive correlation  
+4. Lacuna abundance ~ TempAnomaly in May-June, positive correlation  
+5. Amphipod abundance ~ Temperature in March-June, positive correlation  
+6. Ampithoid abundance ~ TempAnomalyHeat from Jan-June, positive correlation   
+
+Note that TempAnomalyHeat does consistently improve the model by deltaAIC >2. So we could adopt this metric more consistently to compare models. 
