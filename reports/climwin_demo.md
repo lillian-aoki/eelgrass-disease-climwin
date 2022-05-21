@@ -44,55 +44,58 @@ here is seagrass shoot density
 ## Fit baseline model
 
     ## Linear mixed model fit by REML ['lmerMod']
-    ## Formula: DensityShootsMean ~ sBladeArea + TidalHeight + fYear + (1 | Region) +  
-    ##     (1 | Meadow)
+    ## Formula: 
+    ## DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TransectPrevalence +  
+    ##     (1 | Region) + (1 | Meadow)
     ##    Data: dis_env
     ## 
-    ## REML criterion at convergence: 5196
+    ## REML criterion at convergence: 5173.4
     ## 
     ## Scaled residuals: 
     ##     Min      1Q  Median      3Q     Max 
-    ## -1.9560 -0.4019 -0.1155  0.2536  8.5274 
+    ## -1.9056 -0.3968 -0.0930  0.2865  8.4579 
     ## 
     ## Random effects:
     ##  Groups   Name        Variance Std.Dev.
-    ##  Meadow   (Intercept)  28633   169.2   
-    ##  Region   (Intercept)  25955   161.1   
-    ##  Residual             102477   320.1   
+    ##  Meadow   (Intercept) 31227    176.7   
+    ##  Region   (Intercept) 40598    201.5   
+    ##  Residual             98472    313.8   
     ## Number of obs: 362, groups:  Meadow, 21; Region, 5
     ## 
     ## Fixed effects:
-    ##              Estimate Std. Error t value
-    ## (Intercept)    298.44      89.93   3.319
-    ## sBladeArea     -73.38      32.51  -2.257
-    ## TidalHeightU    94.31      37.98   2.484
-    ## fYear2020      -66.88      41.43  -1.615
-    ## fYear2021     -105.55      42.54  -2.481
+    ##                    Estimate Std. Error t value
+    ## (Intercept)          158.37     112.36   1.410
+    ## sBladeArea           -57.96      32.72  -1.771
+    ## TidalHeightU         103.02      37.47   2.750
+    ## fYear2020            -37.74      41.42  -0.911
+    ## fYear2021            -82.71      42.19  -1.960
+    ## TransectPrevalence   281.31      79.57   3.535
     ## 
     ## Correlation of Fixed Effects:
-    ##             (Intr) sBldAr TdlHgU fY2020
-    ## sBladeArea  -0.170                     
-    ## TidalHeghtU -0.246  0.458              
-    ## fYear2020   -0.220  0.062 -0.001       
-    ## fYear2021   -0.258  0.264  0.122  0.477
+    ##             (Intr) sBldAr TdlHgU fY2020 fY2021
+    ## sBladeArea  -0.162                            
+    ## TidalHeghtU -0.208  0.469                     
+    ## fYear2020   -0.237  0.075  0.007              
+    ## fYear2021   -0.250  0.277  0.131  0.490       
+    ## TrnsctPrvln -0.344  0.077  0.038  0.197  0.139
 
 ## Look for climate windows
 
     ##   |                                                                              |                                                                      |   0%  |                                                                              |||                                                                    |   4%  |                                                                              |||||||||                                                              |  11%  |                                                                              ||||||||||||||||                                                       |  21%  |                                                                              ||||||||||||||||||||||||||                                             |  36%  |                                                                              |||||||||||||||||||||||||||||||||||||||                                |  54%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||                  |  75%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| 100%  |                                                                              |                                                                      |   0%  |                                                                              |||                                                                    |   4%  |                                                                              |||||||||                                                              |  11%  |                                                                              ||||||||||||||||                                                       |  21%  |                                                                              ||||||||||||||||||||||||||                                             |  36%  |                                                                              |||||||||||||||||||||||||||||||||||||||                                |  54%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||                  |  75%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| 100%  |                                                                              |                                                                      |   0%  |                                                                              |||                                                                    |   4%  |                                                                              |||||||||                                                              |  11%  |                                                                              ||||||||||||||||                                                       |  21%  |                                                                              ||||||||||||||||||||||||||                                             |  36%  |                                                                              |||||||||||||||||||||||||||||||||||||||                                |  54%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||                  |  75%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| 100%  |                                                                              |                                                                      |   0%  |                                                                              |||                                                                    |   4%  |                                                                              |||||||||                                                              |  11%  |                                                                              ||||||||||||||||                                                       |  21%  |                                                                              ||||||||||||||||||||||||||                                             |  36%  |                                                                              |||||||||||||||||||||||||||||||||||||||                                |  54%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||                  |  75%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| 100%  |                                                                              |                                                                      |   0%  |                                                                              |||                                                                    |   4%  |                                                                              |||||||||                                                              |  11%  |                                                                              ||||||||||||||||                                                       |  21%  |                                                                              ||||||||||||||||||||||||||                                             |  36%  |                                                                              |||||||||||||||||||||||||||||||||||||||                                |  54%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||                  |  75%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| 100%  |                                                                              |                                                                      |   0%  |                                                                              |||                                                                    |   4%  |                                                                              |||||||||                                                              |  11%  |                                                                              ||||||||||||||||                                                       |  21%  |                                                                              ||||||||||||||||||||||||||                                             |  36%  |                                                                              |||||||||||||||||||||||||||||||||||||||                                |  54%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||                  |  75%  |                                                                              |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| 100%
 
     ##            response         climate     type stat func DeltaAICc WindowOpen
-    ## 1 DensityShootsMean     TempAnomaly absolute mean  lin    -43.23          6
-    ## 2 DensityShootsMean TempAnomalyHeat absolute mean  lin    -45.28          4
-    ## 3 DensityShootsMean            Temp absolute mean  lin    -23.22          6
-    ## 4 DensityShootsMean     TempAnomaly relative mean  lin    -41.70          5
-    ## 5 DensityShootsMean TempAnomalyHeat relative mean  lin    -45.77          5
-    ## 6 DensityShootsMean            Temp relative mean  lin    -27.76          5
+    ## 1 DensityShootsMean     TempAnomaly absolute mean  lin    -39.59          6
+    ## 2 DensityShootsMean TempAnomalyHeat absolute mean  lin    -43.26          4
+    ## 3 DensityShootsMean            Temp absolute mean  lin    -20.96          6
+    ## 4 DensityShootsMean     TempAnomaly relative mean  lin    -44.63          5
+    ## 5 DensityShootsMean TempAnomalyHeat relative mean  lin    -45.51          5
+    ## 6 DensityShootsMean            Temp relative mean  lin    -31.26          5
     ##   WindowClose
     ## 1           6
     ## 2           3
     ## 3           6
-    ## 4           4
-    ## 5           4
+    ## 4           3
+    ## 5           3
     ## 6           4
 
 ![](climwin_demo_files/figure-gfm/climwin-1.png)<!-- -->![](climwin_demo_files/figure-gfm/climwin-2.png)<!-- -->
@@ -409,50 +412,52 @@ here is seagrass shoot density
 
 ## Update baseline model to include climate
 
-    ##   yvar  sBladeArea TidalHeight fYear Region Meadow   climate
-    ## 1  520 -1.10021478           U  2019     AK   AK_A 0.4785788
-    ## 2  733 -1.00713811           U  2019     AK   AK_A 0.4785788
-    ## 3  753 -1.09155573           U  2019     AK   AK_A 0.4785788
-    ## 4  900 -0.41868154           L  2019     AK   AK_A 0.4785788
-    ## 5  542 -0.05656529           L  2019     AK   AK_A 0.4785788
-    ## 6  545 -0.75170890           L  2019     AK   AK_A 0.4785788
+    ##   yvar  sBladeArea TidalHeight fYear TransectPrevalence Region Meadow   climate
+    ## 1  520 -1.10021478           U  2019               0.45     AK   AK_A 0.4621338
+    ## 2  733 -1.00713811           U  2019               0.40     AK   AK_A 0.4621338
+    ## 3  753 -1.09155573           U  2019               0.40     AK   AK_A 0.4621338
+    ## 4  900 -0.41868154           L  2019               1.00     AK   AK_A 0.4621338
+    ## 5  542 -0.05656529           L  2019               0.70     AK   AK_A 0.4621338
+    ## 6  545 -0.75170890           L  2019               0.80     AK   AK_A 0.4621338
 
     ## Linear mixed model fit by REML ['lmerMod']
     ## Formula: 
-    ## DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TempAnomalyHeat +  
-    ##     (1 | Region) + (1 | Meadow)
+    ## DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TransectPrevalence +  
+    ##     TempAnomalyHeat + (1 | Region) + (1 | Meadow)
     ##    Data: new_data
     ## 
-    ## REML criterion at convergence: 5148.1
+    ## REML criterion at convergence: 5125.8
     ## 
     ## Scaled residuals: 
     ##     Min      1Q  Median      3Q     Max 
-    ## -1.9116 -0.4508 -0.0778  0.3365  8.4671 
+    ## -2.3765 -0.4418 -0.0223  0.2833  8.6083 
     ## 
     ## Random effects:
     ##  Groups   Name        Variance Std.Dev.
-    ##  Meadow   (Intercept) 26327    162.3   
-    ##  Region   (Intercept) 20720    143.9   
-    ##  Residual             92991    304.9   
+    ##  Meadow   (Intercept) 24824    157.6   
+    ##  Region   (Intercept) 20299    142.5   
+    ##  Residual             90355    300.6   
     ## Number of obs: 362, groups:  Meadow, 21; Region, 5
     ## 
     ## Fixed effects:
-    ##                 Estimate Std. Error t value
-    ## (Intercept)        3.611     95.394   0.038
-    ## sBladeArea       -36.065     31.483  -1.146
-    ## TidalHeightU     119.211     36.381   3.277
-    ## fYear2020         76.994     45.907   1.677
-    ## fYear2021        178.865     61.605   2.903
-    ## TempAnomalyHeat  997.928    162.677   6.134
+    ##                    Estimate Std. Error t value
+    ## (Intercept)         -225.27     109.65  -2.054
+    ## sBladeArea           -55.00      30.51  -1.803
+    ## TidalHeightU         116.34      35.76   3.253
+    ## fYear2020            100.25      45.69   2.194
+    ## fYear2021            188.91      60.20   3.138
+    ## TransectPrevalence   274.66      75.83   3.622
+    ## TempAnomalyHeat     1091.03     177.40   6.150
     ## 
     ## Correlation of Fixed Effects:
-    ##             (Intr) sBldAr TdlHgU fY2020 fY2021
-    ## sBladeArea  -0.249                            
-    ## TidalHeghtU -0.277  0.467                     
-    ## fYear2020   -0.428  0.153  0.057              
-    ## fYear2021   -0.533  0.319  0.165  0.654       
-    ## TempAnmlyHt -0.505  0.198  0.114  0.511  0.753
+    ##             (Intr) sBldAr TdlHgU fY2020 fY2021 TrnscP
+    ## sBladeArea  -0.191                                   
+    ## TidalHeghtU -0.249  0.460                            
+    ## fYear2020   -0.491  0.096  0.046                     
+    ## fYear2021   -0.596  0.227  0.144  0.654              
+    ## TrnsctPrvln -0.341  0.076  0.037  0.174  0.099       
+    ## TempAnmlyHt -0.583  0.062  0.083  0.496  0.743  0.009
 
     ##                df      AIC
-    ## fit_den         8 5212.000
-    ## fit_den_update  9 5166.126
+    ## fit_den         9 5191.420
+    ## fit_den_update 10 5145.794

@@ -88,7 +88,7 @@ dis_env$SampleDay <- factor(format(dis_env$SampleDate, "%d/%m/%Y"))
 # convert year to factor
 dis_env$fYear <- as.factor(dis_env$Year)
 
-fit_den <- lmer(DensityShootsMean ~ sBladeArea + TidalHeight + fYear + 
+fit_den <- lmer(DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TransectPrevalence +
                   (1|Region) + (1|Meadow),
                 data = dis_env)
 summary(fit_den)
@@ -155,7 +155,7 @@ head(clim_mur_den_tr[[5]]$BestModelData)
 # rather than recalculate, use this dataset but rename yvar and climate
 new_data <- clim_mur_den_tr[[5]]$BestModelData
 new_data <- rename(new_data, DensityShootsMean=yvar, TempAnomalyHeat=climate)
-fit_den_update <- lmer(DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TempAnomalyHeat +
+fit_den_update <- lmer(DensityShootsMean ~ sBladeArea + TidalHeight + fYear + TransectPrevalence+ TempAnomalyHeat +
                   (1|Region) + (1|Meadow),
                 data = new_data)
 summary(fit_den_update)

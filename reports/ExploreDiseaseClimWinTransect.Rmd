@@ -278,23 +278,23 @@ No improvement to the model by dropping terms, therefore keep as baseline
 
 ```{r les_climwin, echo=FALSE}
 # after first run, load the model output
-# clim_mur_les <- readRDS("output/climwin_les_daily_MUR_transect.rds")
-clim_mur_les <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
-                                           TempAnomalyHeat = mur$DiffMeanHeat,
-                                           Temp = mur$analysed_sst),
-                         cdate = mur$Day,
-                         bdate = dis_env$SampleDay,
-                         baseline = fit_les,
-                         cohort = as.factor(dis_env$Year),
-                         cinterval = "month",
-                         range = c(6, 0),
-                         type = c("absolute","relative"),
-                         refday = c(20, 7),
-                         cmissing = "method1",
-                         stat = c("mean"),
-                         func = "lin",
-                         spatial = list(dis_env$Meadow, mur$Meadow))
-saveRDS(clim_mur_les, file = "output/climwin_les_daily_MUR_transect.rds")
+ clim_mur_les <- readRDS("output/climwin_les_daily_MUR_transect.rds")
+# clim_mur_les <- slidingwin(xvar = list(TempAnomaly = mur$DiffMean,
+#                                            TempAnomalyHeat = mur$DiffMeanHeat,
+#                                            Temp = mur$analysed_sst),
+#                          cdate = mur$Day,
+#                          bdate = dis_env$SampleDay,
+#                          baseline = fit_les,
+#                          cohort = as.factor(dis_env$Year),
+#                          cinterval = "month",
+#                          range = c(6, 0),
+#                          type = c("absolute","relative"),
+#                          refday = c(20, 7),
+#                          cmissing = "method1",
+#                          stat = c("mean"),
+#                          func = "lin",
+#                          spatial = list(dis_env$Meadow, mur$Meadow))
+# saveRDS(clim_mur_les, file = "output/climwin_les_daily_MUR_transect.rds")
 
 clim_mur_les$combos
 # strongly better AIC for temp anomaly from 1 month window opening 2 months prior to sampling date and July 20 (~May temps)
